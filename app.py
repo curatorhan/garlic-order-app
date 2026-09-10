@@ -57,10 +57,12 @@ except Exception as e:
     st.error(f'설정 시트를 읽지 못했습니다. {e}')
     st.stop()
 
+st.caption('사용 채널 · ' + ' / '.join(c['채널'] for c in CHANNELS))
+
 tab1, tab2, tab3, tab4 = st.tabs(['일일 처리', '기록', '예측', '설정'])
 
 # ---------------- 일일 처리 ----------------
-with tab1:
+def daily_tab():
     st.subheader('1. 재고 입력')
     st.caption('포대 20kg 기준 · 재고가 없는 품목은 0으로 두세요')
     stock = stock_inputs()
@@ -71,7 +73,7 @@ with tab1:
                              type=['xlsx', 'xls'], accept_multiple_files=True)
     if not files:
         st.info('주문 파일을 올리면 결과가 나옵니다.')
-        st.stop()
+        return
 
     frames, raws, errs = [], {}, []
     for f in files:
@@ -87,7 +89,7 @@ with tab1:
     for e in errs:
         st.error(e)
     if not frames:
-        st.stop()
+        return
 
     df = pd.concat(frames, ignore_index=True)
 
@@ -95,7 +97,7 @@ with tab1:
     if not unknown.empty:
         st.error('해석하지 못한 옵션이 있습니다. 설정 시트를 확인한 뒤 다시 올려주세요.')
         st.dataframe(unknown, use_container_width=True, hide_index=True)
-        st.stop()
+        return
 
     st.subheader('3. 결과')
     ok, held, remain = allocate(df, stock)
@@ -141,7 +143,7 @@ with tab1:
     st.subheader('4. 내려받기')
     if conf.empty:
         st.warning('출고 확정 건이 없습니다. 재고를 확인해 주세요.')
-        st.stop()
+        return
 
     counts, buffers = {}, {}
     for chan, (raw, cfg) in raws.items():
@@ -168,6 +170,10 @@ with tab1:
 
     with st.expander('패킹리스트 미리보기'):
         st.dataframe(pk, use_container_width=True, hide_index=True)
+
+
+with tab1:
+    daily_tab()
 
 # ---------------- 기록 ----------------
 with tab2:
