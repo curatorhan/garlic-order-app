@@ -12,30 +12,50 @@ st.set_page_config(page_title='주문 처리', page_icon='🧄', layout='wide')
 VIEW = st.query_params.get('view', '')
 
 
+GROUP_COLORS = ['#4F7A45', '#9A6B2F', '#6B5B95', '#3F6E82']
+
+
+def section_header(num, title, sub, color, bg):
+    st.markdown(
+        f"<div style='background:{bg};border-left:5px solid {color};"
+        f"border-radius:6px;padding:10px 16px;margin:6px 0 14px'>"
+        f"<span style='font-size:18px;font-weight:600;color:{color}'>{num}. {title}</span>"
+        f"<span style='font-size:13px;color:#6b6b6b;margin-left:12px'>{sub}</span></div>",
+        unsafe_allow_html=True)
+
+
 def stock_inputs(prefix=''):
-    """재고 입력 칸. 그룹별로 나눠서 그린다."""
+    """재고 입력 칸. 종류별로 테두리를 둘러 구분한다."""
     stock = {}
     cols = st.columns(len(STOCK_GROUPS))
     for gi, (gname, mode, items) in enumerate(STOCK_GROUPS):
+        color = GROUP_COLORS[gi % len(GROUP_COLORS)]
         with cols[gi]:
-            st.markdown(f'**{gname}**')
-            st.caption('포대 · 잔여kg' if mode == 'bag' else '개수')
-            for label, sku in items:
-                if mode == 'bag':
-                    c0, c1, c2 = st.columns([3, 2, 2])
-                    c0.markdown(f"<div style='padding-top:8px;font-size:14px'>{label}</div>",
-                                unsafe_allow_html=True)
-                    b = c1.number_input('포대', 0, 999, 0, key=f'{prefix}b_{sku}',
-                                        label_visibility='collapsed')
-                    r = c2.number_input('kg', 0, BAG_KG - 1, 0, key=f'{prefix}r_{sku}',
-                                        label_visibility='collapsed')
-                    stock[sku] = b * BAG_KG + r
-                else:
-                    c0, c1 = st.columns([3, 2])
-                    c0.markdown(f"<div style='padding-top:8px;font-size:14px'>{label}</div>",
-                                unsafe_allow_html=True)
-                    stock[sku] = c1.number_input('개수', 0, 9999, 0, key=f'{prefix}c_{sku}',
-                                                 label_visibility='collapsed')
+            with st.container(border=True):
+                st.markdown(
+                    f"<div style='border-bottom:2px solid {color};padding-bottom:6px;"
+                    f"margin-bottom:10px'>"
+                    f"<span style='font-size:15px;font-weight:600;color:{color}'>{gname}</span>"
+                    f"<span style='font-size:12px;color:#8a8a8a;float:right;padding-top:3px'>"
+                    f"{'포대 · 잔여kg' if mode == 'bag' else '개수'}</span></div>",
+                    unsafe_allow_html=True)
+                for label, sku in items:
+                    if mode == 'bag':
+                        c0, c1, c2 = st.columns([3, 2, 2])
+                        c0.markdown(f"<div style='padding-top:8px;font-size:14px'>{label}</div>",
+                                    unsafe_allow_html=True)
+                        b = c1.number_input('포대', 0, 999, 0, key=f'{prefix}b_{sku}',
+                                            label_visibility='collapsed')
+                        r = c2.number_input('kg', 0, BAG_KG - 1, 0, key=f'{prefix}r_{sku}',
+                                            label_visibility='collapsed')
+                        stock[sku] = b * BAG_KG + r
+                    else:
+                        c0, c1 = st.columns([3, 2])
+                        c0.markdown(f"<div style='padding-top:8px;font-size:14px'>{label}</div>",
+                                    unsafe_allow_html=True)
+                        stock[sku] = c1.number_input('개수', 0, 9999, 0,
+                                                     key=f'{prefix}c_{sku}',
+                                                     label_visibility='collapsed')
     return stock
 
 
@@ -63,14 +83,16 @@ tab1, tab2, tab3, tab4 = st.tabs(['일일 처리', '기록', '예측', '설정']
 
 # ---------------- 일일 처리 ----------------
 def daily_tab():
-    st.subheader('1. 재고 입력')
-    st.caption('포대 20kg 기준 · 재고가 없는 품목은 0으로 두세요')
+    section_header(1, '재고 입력', '포대 20kg 기준 · 재고가 없는 품목은 0으로 두세요',
+                   '#3F6B46', '#EDF5EE')
     stock = stock_inputs()
     st.metric('총 재고', f'{sum(stock.values()):,}kg')
 
-    st.subheader('2. 주문 파일 업로드')
-    files = st.file_uploader('여러 개를 한 번에 올리세요. 채널은 자동으로 판별합니다.',
-                             type=['xlsx', 'xls'], accept_multiple_files=True)
+    st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
+    section_header(2, '주문 파일 업로드', '여러 개를 한 번에 올리세요. 채널은 자동으로 판별합니다.',
+                   '#2F6FA8', '#EDF3FA')
+    files = st.file_uploader('주문 파일', type=['xlsx', 'xls'],
+                             accept_multiple_files=True, label_visibility='collapsed')
     if not files:
         st.info('주문 파일을 올리면 결과가 나옵니다.')
         return
@@ -99,7 +121,8 @@ def daily_tab():
         st.dataframe(unknown, use_container_width=True, hide_index=True)
         return
 
-    st.subheader('3. 결과')
+    st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
+    section_header(3, '결과', '', '#8A6D3B', '#FAF5EC')
     ok, held, remain = allocate(df, stock)
     conf = df[df['_키'].isin(ok)]
     pri = top_priority(held, 3)
@@ -140,7 +163,8 @@ def daily_tab():
         hc.columns = ['채널', '보류 건수']
         st.dataframe(hc, use_container_width=True, hide_index=True)
 
-    st.subheader('4. 내려받기')
+    st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
+    section_header(4, '내려받기', '', '#6B5B95', '#F3F0F7')
     if conf.empty:
         st.warning('출고 확정 건이 없습니다. 재고를 확인해 주세요.')
         return
