@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
 from config import load_channels, STOCK_GROUPS, STOCK_SKUS, BAG_KG
 from core import read_orders, check_unknown, allocate, top_priority
 from build import integrated_sheet, packing_list, channel_file, verify
+import sheets
 
 st.set_page_config(page_title='주문 처리', page_icon='🧄', layout='wide')
 
@@ -63,9 +66,31 @@ def stock_inputs(prefix=''):
 if VIEW == 'stock':
     st.title('오늘의 재고')
     st.caption('포대 20kg 기준 · 없는 품목은 0으로 두세요')
+
+    if sheets.enabled():
+        prev, saved_at, err = sheets.read_stock()
+        if saved_at:
+            st.caption(f'마지막 저장 · {saved_at}')
     stock = stock_inputs('s_')
     st.metric('총 재고', f'{sum(stock.values()):,}kg')
-    st.info('저장 기능은 다음 단계에서 붙습니다. 지금은 이 숫자를 CS에 알려주세요.')
+
+    if not sheets.enabled():
+        st.info('저장 설정이 아직 없습니다. 이 숫자를 CS에 알려주세요.')
+    else:
+        if st.button('저장', type='primary', use_container_width=True):
+            items = []
+            for _g, mode, _items in STOCK_GROUPS:
+                for _lb, sku in _items:
+                    kg = stock[sku]
+                    items.append({'sku': sku,
+                                  'bag': kg // BAG_KG if mode == 'bag' else 0,
+                                  'rest': kg % BAG_KG if mode == 'bag' else 0,
+                                  'kg': kg})
+            at, err = sheets.save_stock(items)
+            if err:
+                st.error(err)
+            else:
+                st.success(f'저장했습니다 · {at}')
     st.stop()
 
 
@@ -83,10 +108,42 @@ tab1, tab2, tab3, tab4 = st.tabs(['일일 처리', '기록', '예측', '설정']
 
 # ---------------- 일일 처리 ----------------
 def daily_tab():
-    section_header(1, '재고 입력', '포대 20kg 기준 · 재고가 없는 품목은 0으로 두세요',
-                   '#3F6B46', '#EDF5EE')
-    stock = stock_inputs()
-    st.metric('총 재고', f'{sum(stock.values()):,}kg')
+    if sheets.enabled():
+        section_header(1, '재고', '배송팀이 저장한 값입니다', '#3F6B46', '#EDF5EE')
+        prev, saved_at, err = sheets.read_stock()
+        if err:
+            st.error(err)
+            return
+        stock = {sku: prev['kg'].get(sku, 0)
+                 for _g, _m, its in STOCK_GROUPS for _lb, sku in its}
+        if sum(stock.values()) == 0:
+            st.warning('재고 입력을 기다리는 중입니다. 배송팀이 저장하면 여기에 나옵니다.')
+            return
+        st.caption(f'{saved_at} 기준' if saved_at else '')
+        cols = st.columns(len(STOCK_GROUPS))
+        for gi, (gname, mode, items) in enumerate(STOCK_GROUPS):
+            color = GROUP_COLORS[gi % len(GROUP_COLORS)]
+            with cols[gi]:
+                with st.container(border=True):
+                    st.markdown(
+                        f"<div style='border-bottom:2px solid {color};padding-bottom:6px;"
+                        f"margin-bottom:8px'><span style='font-size:15px;font-weight:600;"
+                        f"color:{color}'>{gname}</span></div>", unsafe_allow_html=True)
+                    for label, sku in items:
+                        kg = stock[sku]
+                        sub = (f"{kg // BAG_KG}포대 {kg % BAG_KG}kg"
+                               if mode == 'bag' else f'{kg}개')
+                        st.markdown(
+                            f"<div style='display:flex;justify-content:space-between;"
+                            f"font-size:14px;padding:3px 0'><span>{label}</span>"
+                            f"<span style='font-weight:600'>{sub}</span></div>",
+                            unsafe_allow_html=True)
+        st.metric('총 재고', f'{sum(stock.values()):,}kg')
+    else:
+        section_header(1, '재고 입력', '포대 20kg 기준 · 재고가 없는 품목은 0으로 두세요',
+                       '#3F6B46', '#EDF5EE')
+        stock = stock_inputs()
+        st.metric('총 재고', f'{sum(stock.values()):,}kg')
 
     st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
     section_header(2, '주문 파일 업로드', '여러 개를 한 번에 올리세요. 채널은 자동으로 판별합니다.',
@@ -194,6 +251,29 @@ def daily_tab():
 
     with st.expander('패킹리스트 미리보기'):
         st.dataframe(pk, use_container_width=True, hide_index=True)
+
+    if sheets.enabled():
+        st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
+        if st.button('오늘 기록 저장', use_container_width=True):
+            today = datetime.now()
+            day = today.strftime('%Y-%m-%d')
+            wd = ['월', '화', '수', '목', '금', '토', '일'][today.weekday()]
+            out_rows = [{'sku': s, 'kg': int(v)}
+                        for s, v in conf.groupby('_sku')['_kg'].sum().items()]
+            agg = {}
+            for o in held:
+                for s, v in o['부족'].items():
+                    a = agg.setdefault(s, [0, 0.0])
+                    a[0] += 1
+                    a[1] += v
+            hold_rows = [{'sku': s, 'cnt': c, 'kg': int(k)}
+                         for s, (c, k) in agg.items()]
+            e = sheets.save_log(day, wd, out_rows, hold_rows)
+            if e:
+                st.error(e)
+            else:
+                st.success(f'{day} ({wd}) 기록을 저장했습니다. '
+                           f'출고 {len(out_rows)}행 · 보류 {len(hold_rows)}행')
 
 
 with tab1:
