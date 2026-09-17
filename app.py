@@ -67,30 +67,36 @@ if VIEW == 'stock':
     st.title('오늘의 재고')
     st.caption('포대 20kg 기준 · 없는 품목은 0으로 두세요')
 
-    if sheets.enabled():
-        prev, saved_at, err = sheets.read_stock()
-        if saved_at:
-            st.caption(f'마지막 저장 · {saved_at}')
-    stock = stock_inputs('s_')
-    st.metric('총 재고', f'{sum(stock.values()):,}kg')
-
     if not sheets.enabled():
+        stock_inputs('s_')
         st.info('저장 설정이 아직 없습니다. 이 숫자를 CS에 알려주세요.')
-    else:
-        if st.button('저장', type='primary', use_container_width=True):
-            items = []
-            for _g, mode, _items in STOCK_GROUPS:
-                for _lb, sku in _items:
-                    kg = stock[sku]
-                    items.append({'sku': sku,
-                                  'bag': kg // BAG_KG if mode == 'bag' else 0,
-                                  'rest': kg % BAG_KG if mode == 'bag' else 0,
-                                  'kg': kg})
-            at, err = sheets.save_stock(items)
-            if err:
-                st.error(err)
-            else:
-                st.success(f'저장했습니다 · {at}')
+        st.stop()
+
+    prev, saved_at, err = sheets.read_stock()
+    if saved_at:
+        st.caption(f'마지막 저장 · {saved_at}')
+
+    # 폼으로 묶어 칸마다 화면이 다시 그려지지 않게 한다
+    with st.form('stock_form', border=False):
+        stock = stock_inputs('s_')
+        submitted = st.form_submit_button('저장', type='primary',
+                                          use_container_width=True)
+
+    if submitted:
+        items = []
+        for _g, mode, _items in STOCK_GROUPS:
+            for _lb, sku in _items:
+                kg = stock[sku]
+                items.append({'sku': sku,
+                              'bag': kg // BAG_KG if mode == 'bag' else 0,
+                              'rest': kg % BAG_KG if mode == 'bag' else 0,
+                              'kg': kg})
+        at, e2 = sheets.save_stock(items)
+        if e2:
+            st.error(e2)
+        else:
+            sheets.clear_cache()
+            st.success(f'저장했습니다 · {at} · 총 {sum(stock.values()):,}kg')
     st.stop()
 
 
@@ -119,7 +125,11 @@ def daily_tab():
         if sum(stock.values()) == 0:
             st.warning('재고 입력을 기다리는 중입니다. 배송팀이 저장하면 여기에 나옵니다.')
             return
-        st.caption(f'{saved_at} 기준' if saved_at else '')
+        c_a, c_b = st.columns([5, 1])
+        c_a.caption(f'{saved_at} 기준' if saved_at else '')
+        if c_b.button('새로고침', use_container_width=True):
+            sheets.clear_cache()
+            st.rerun()
         cols = st.columns(len(STOCK_GROUPS))
         for gi, (gname, mode, items) in enumerate(STOCK_GROUPS):
             color = GROUP_COLORS[gi % len(GROUP_COLORS)]
