@@ -23,15 +23,24 @@ def enabled():
     return bool(url and token)
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def _fetch_stock(url, token):
+    r = requests.get(url, params={'token': token, 'action': 'stock'},
+                     timeout=TIMEOUT)
+    return r.json()
+
+
+def clear_cache():
+    _fetch_stock.clear()
+
+
 def read_stock():
     """저장된 재고를 읽는다. (stock, saved_at, error) 반환"""
     url, token = _conf()
     if not (url and token):
         return {}, '', '저장 설정이 없습니다.'
     try:
-        r = requests.get(url, params={'token': token, 'action': 'stock'},
-                         timeout=TIMEOUT)
-        d = r.json()
+        d = _fetch_stock(url, token)
     except Exception as e:
         return {}, '', f'시트를 읽지 못했습니다. {e}'
     if not d.get('ok'):
