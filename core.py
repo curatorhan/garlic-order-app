@@ -110,12 +110,29 @@ def read_orders(file, channels):
     warns = []
     raw = None
     for ch in channels:
-        try:
-            t = pd.read_excel(file, header=ch['헤더행'] - 1)
-        except Exception:
-            continue
-        if ch['판별컬럼'] and ch['판별컬럼'] in t.columns:
-            raw, chan = t, ch
+        # 설정값을 먼저 보되, 주문처가 안내문 줄을 붙였다 뗐다 하므로
+        # 판별컬럼이 안 보이면 앞쪽 몇 줄을 더 훑는다
+        tries = [ch['헤더행'] - 1] + [h for h in (0, 1, 2, 3)
+                                      if h != ch['헤더행'] - 1]
+        for h in tries:
+            try:
+                t = pd.read_excel(file, header=h)
+            except Exception:
+                continue
+            finally:
+                try:
+                    file.seek(0)
+                except Exception:
+                    pass
+            if ch['판별컬럼'] and ch['판별컬럼'] in t.columns:
+                raw, chan = t, ch
+                if h != ch['헤더행'] - 1:
+                    warns.append(
+                        f"[{ch['채널']}] 컬럼명이 {h + 1}행에 있습니다. "
+                        f"설정 시트에는 {ch['헤더행']}행으로 되어 있어 자동으로 맞췄습니다.")
+                    chan = dict(ch, 헤더행=h + 1)
+                break
+        if raw is not None:
             break
     if raw is None:
         return None, None, ['어느 채널인지 판별하지 못했습니다. 설정 시트의 판별컬럼을 확인하세요.']
