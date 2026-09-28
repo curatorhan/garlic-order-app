@@ -110,11 +110,19 @@ except Exception as e:
 
 st.caption('사용 채널 · ' + ' / '.join(c['채널'] for c in CHANNELS))
 
-tab1, tab2, tab3, tab4 = st.tabs(['일일 처리', '기록', '예측', '설정'])
-
 # ---------------- 일일 처리 ----------------
 def daily_tab():
-    if sheets.enabled():
+    skip = st.checkbox('재고 없이 진행 — 올린 파일 전체를 확정합니다',
+                       key='skip_stock')
+
+    if skip:
+        st.markdown(
+            "<div style='background:#FDF1EC;border-left:5px solid #A8442A;"
+            "border-radius:6px;padding:10px 16px;margin:6px 0 14px;font-size:14px;"
+            "color:#A8442A'>재고를 확인하지 않습니다. 업소용·긴급건 전용으로만 쓰세요."
+            "</div>", unsafe_allow_html=True)
+        stock = None
+    elif sheets.enabled():
         section_header(1, '재고', '배송팀이 저장한 값입니다', '#3F6B46', '#EDF5EE')
         prev, saved_at, err = sheets.read_stock()
         if err:
@@ -190,7 +198,10 @@ def daily_tab():
 
     st.markdown('<div style="height:18px"></div>', unsafe_allow_html=True)
     section_header(3, '결과', '', '#8A6D3B', '#FAF5EC')
-    ok, held, remain = allocate(df, stock)
+    if stock is None:
+        ok, held = set(df['_키']), []
+    else:
+        ok, held, _remain = allocate(df, stock)
     conf = df[df['_키'].isin(ok)]
     pri = top_priority(held, 3)
 
@@ -200,11 +211,12 @@ def daily_tab():
     c3.metric('보류', len(held))
     c4.metric('확정 물량', f"{int(conf['_kg'].sum()):,}kg")
 
-    st.markdown('**재고 현황**')
     need = df.groupby('_sku')['_kg'].sum()
     rows = []
     for gname, mode, items in STOCK_GROUPS:
         for label, sku in items:
+            if stock is None:
+                continue
             nd = float(need.get(sku, 0))
             if nd == 0 and stock[sku] == 0:
                 continue
@@ -213,7 +225,9 @@ def daily_tab():
                          '잔여kg': stock[sku] % BAG_KG if mode == 'bag' else '',
                          '총 재고': stock[sku], '소요': int(nd),
                          '과부족': int(stock[sku] - nd)})
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    if stock is not None:
+        st.markdown('**재고 현황**')
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
     if pri:
         st.markdown('**우선 생산 품목**')
@@ -264,56 +278,73 @@ def daily_tab():
 
     if sheets.enabled():
         st.markdown('<div style="height:12px"></div>', unsafe_allow_html=True)
-        if st.button('오늘 기록 저장', use_container_width=True):
-            today = datetime.now()
-            day = today.strftime('%Y-%m-%d')
-            wd = ['월', '화', '수', '목', '금', '토', '일'][today.weekday()]
-            out_rows = [{'sku': s, 'kg': int(v)}
-                        for s, v in conf.groupby('_sku')['_kg'].sum().items()]
-            agg = {}
-            for o in held:
-                for s, v in o['부족'].items():
-                    a = agg.setdefault(s, [0, 0.0])
-                    a[0] += 1
-                    a[1] += v
-            hold_rows = [{'sku': s, 'cnt': c, 'kg': int(k)}
-                         for s, (c, k) in agg.items()]
-            e = sheets.save_log(day, wd, out_rows, hold_rows)
-            if e:
-                st.error(e)
-            else:
-                st.success(f'{day} ({wd}) 기록을 저장했습니다. '
-                           f'출고 {len(out_rows)}행 · 보류 {len(hold_rows)}행')
+        today = datetime.now()
+        day = today.strftime('%Y-%m-%d')
+        wd = ['월', '화', '수', '목', '금', '토', '일'][today.weekday()]
+
+        done, r_err = sheets.read_rounds(day)
+        auto = (max(done) + 1) if done else 1
+        opts = sorted(set(done) | {auto})
+
+        c1, c2 = st.columns([1, 3])
+        rd = c1.selectbox('차수', opts, index=opts.index(auto),
+                          format_func=lambda x: f'{x}차')
+        note = (f"오늘 저장된 차수 · {', '.join(f'{d}차' for d in done)}"
+                if done else '오늘 저장된 기록이 없습니다')
+        if rd in done:
+            note += f' · {rd}차를 덮어씁니다'
+        c2.markdown(f"<div style='padding-top:30px;font-size:13.5px;color:#808495'>"
+                    f"{note}</div>", unsafe_allow_html=True)
+        if r_err:
+            st.warning(r_err)
+
+        if st.button(f'{rd}차로 기록 저장', use_container_width=True):
+            st.session_state['confirm_save'] = rd
+
+        if st.session_state.get('confirm_save') == rd:
+            msg = (f'{day} ({wd}) {rd}차로 저장합니다.'
+                   + (' 기존 기록을 덮어씁니다.' if rd in done else ''))
+            st.info(msg)
+            cc1, cc2 = st.columns(2)
+            if cc1.button('저장', type='primary', use_container_width=True):
+                out_rows = [{'sku': s, 'kg': int(v)}
+                            for s, v in conf.groupby('_sku')['_kg'].sum().items()]
+                agg = {}
+                for o in held:
+                    for s, v in o['부족'].items():
+                        x = agg.setdefault(s, [0, 0.0])
+                        x[0] += 1
+                        x[1] += v
+                hold_rows = [{'sku': s, 'cnt': c, 'kg': int(k)}
+                             for s, (c, k) in agg.items()]
+                e = sheets.save_log(day, wd, rd, out_rows, hold_rows)
+                st.session_state['confirm_save'] = None
+                if e:
+                    st.error(e)
+                else:
+                    st.success(f'{day} ({wd}) {rd}차 · 출고 {len(out_rows)}행 · '
+                               f'보류 {len(hold_rows)}행 저장했습니다.')
+            if cc2.button('취소', use_container_width=True):
+                st.session_state['confirm_save'] = None
+                st.rerun()
 
 
-with tab1:
-    daily_tab()
+daily_tab()
 
-# ---------------- 기록 ----------------
-with tab2:
-    st.subheader('기록')
-    st.info('출고·보류·재고 이력이 쌓이면 여기서 조회합니다. '
-            '구글 시트 저장을 붙인 뒤 열립니다.')
-
-# ---------------- 예측 ----------------
-with tab3:
-    st.subheader('예측')
-    st.info('요일별 실출고 평균과 예측 대비 편차를 보여줍니다. '
-            '기록이 4주 정도 쌓여야 의미 있는 숫자가 나옵니다.')
-
-# ---------------- 설정 ----------------
-with tab4:
-    st.subheader('채널 설정')
+# ---------------- 설정 (접이식) ----------------
+with st.expander('설정 보기'):
+    st.markdown('**채널 설정**')
     st.caption('구글 시트에서 읽어옵니다. 채널을 추가하거나 컬럼명이 바뀌면 시트를 고치세요.')
     st.dataframe(pd.DataFrame(CHANNELS), use_container_width=True, hide_index=True)
 
-    st.subheader('재고 SKU')
+    st.markdown('**재고 SKU**')
     st.dataframe(pd.DataFrame([
         {'구분': g, '입력': '포대·잔여kg' if m == 'bag' else '개수',
          '품목': lb, '재고 SKU': sku}
         for g, m, items in STOCK_GROUPS for lb, sku in items]),
         use_container_width=True, hide_index=True)
 
-    st.subheader('배송팀 재고 화면')
-    st.caption('아래 주소를 태블릿 홈 화면에 바로가기로 걸어두세요.')
-    st.code('현재 주소 뒤에 ?view=stock 을 붙이면 됩니다', language=None)
+    st.markdown('**배송팀 재고 화면**')
+    st.caption('현재 주소 뒤에 ?view=stock 을 붙이면 재고 입력 전용 화면이 열립니다.')
+
+
