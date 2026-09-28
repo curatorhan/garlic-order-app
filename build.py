@@ -199,20 +199,38 @@ def channel_file(raw_df, key_col, keys, sheet_name=None):
     return buf.getvalue(), len(out)
 
 def verify(conf, channel_counts):
-    """검증: 발송파일 합계와 확정 행수, 통합시트와 패킹리스트 중량"""
+    """검증: 채널별 행수 대조, 주문번호 중복, 주소 누락"""
     msgs, okall = [], True
-    tot = sum(channel_counts.values())
-    if tot == len(conf):
-        msgs.append(f'발송파일 {tot}행 = 확정 {len(conf)}행 일치')
-    else:
-        msgs.append(f'발송파일 {tot}행 ≠ 확정 {len(conf)}행'); okall = False
+
+    by_ch = conf.groupby('_채널').size().to_dict()
+    for chan, n_conf in sorted(by_ch.items()):
+        n_file = channel_counts.get(chan)
+        if n_file is None:
+            msgs.append(f'{chan} 확정 {n_conf}행인데 발송파일이 없습니다 '
+                        f'(파일을 안 올렸거나 읽지 못했습니다)')
+            okall = False
+        elif n_file != n_conf:
+            dup = int(conf[conf['_채널'] == chan]['_키'].duplicated().sum())
+            extra = f' · 주문번호 중복 {dup}건' if dup else ' · 원본에 없는 주문번호가 있습니다'
+            msgs.append(f'{chan} 확정 {n_conf}행 ≠ 발송파일 {n_file}행{extra}')
+            okall = False
+        else:
+            msgs.append(f'{chan} {n_conf}행 일치')
+
+    for chan in channel_counts:
+        if chan not in by_ch:
+            msgs.append(f'{chan} 확정 0행 (모두 보류)')
+
     if conf['_키'].duplicated().any():
-        msgs.append('중복된 주문번호가 있습니다'); okall = False
+        msgs.append('주문번호 중복 있음')
+        okall = False
     else:
         msgs.append('주문번호 중복 없음')
+
     blank = conf[(conf['_우편'].isin(['', 'nan'])) | (conf['_주소'].str.strip() == '')]
     if len(blank):
-        msgs.append(f'우편번호·주소 누락 {len(blank)}건'); okall = False
+        msgs.append(f'우편번호·주소 누락 {len(blank)}건')
+        okall = False
     else:
         msgs.append('우편번호·주소 누락 없음')
     return okall, msgs
