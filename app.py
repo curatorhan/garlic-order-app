@@ -181,6 +181,7 @@ def daily_tab():
             continue
         frames.append(d)
         f.seek(0)
+        f.seek(0)
         raws[ch['채널']] = (pd.read_excel(f, header=ch['헤더행'] - 1), ch)
         st.write(f"**{f.name}** → {ch['채널']} · {len(d)}행")
     for e in errs:
