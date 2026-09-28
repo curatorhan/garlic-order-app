@@ -172,7 +172,7 @@ def daily_tab():
         st.info('주문 파일을 올리면 결과가 나옵니다.')
         return
 
-    frames, raws, errs = [], {}, []
+    frames, raws, errs = [], [], []
     for f in files:
         d, ch, w = read_orders(f, CHANNELS)
         errs += w
@@ -181,10 +181,12 @@ def daily_tab():
             continue
         frames.append(d)
         f.seek(0)
-        f.seek(0)
-        raws[ch['채널']] = (pd.read_excel(f, header=ch['헤더행'] - 1), ch)
+        # 같은 채널 파일이 여러 개여도 파일 단위로 그대로 둔다
+        raws.append({'name': f.name,
+                     'raw': pd.read_excel(f, header=ch['헤더행'] - 1),
+                     'cfg': ch})
         st.write(f"**{f.name}** → {ch['채널']} · {len(d)}행")
-    for e in errs:
+    for e in dict.fromkeys(errs):
         st.error(e)
     if not frames:
         return
@@ -251,17 +253,23 @@ def daily_tab():
         st.warning('출고 확정 건이 없습니다. 재고를 확인해 주세요.')
         return
 
-    counts, buffers = {}, {}
-    for chan, (raw, cfg) in raws.items():
+    counts, outs = {}, []
+    for item in raws:
+        chan = item['cfg']['채널']
         keys = set(conf[conf['_채널'] == chan]['_키'])
         sheet = '발송처리' if chan == '스마트스토어' else None
-        data, n = channel_file(raw, cfg['고유키'], keys, sheet)
-        counts[chan], buffers[chan] = n, data
+        data, n = channel_file(item['raw'], item['cfg']['고유키'], keys, sheet)
+        counts[chan] = counts.get(chan, 0) + n
+        stem = item['name'].rsplit('.', 1)[0]
+        outs.append({'chan': chan, 'stem': stem, 'data': data, 'n': n})
 
     okall, msgs = verify(conf, counts)
-    (st.success if okall else st.error)(' · '.join(msgs))
-    if not okall:
-        st.warning('검증에 실패했습니다. 내려받기 전에 원인을 확인하세요.')
+    if okall:
+        st.success(' · '.join(msgs))
+    else:
+        st.error('검증 실패 — 아래 내용을 확인한 뒤 내려받으세요.')
+        for m in msgs:
+            st.markdown(f'- {m}')
 
     pk_bytes, pk = packing_list(conf)
     d1, d2 = st.columns(2)
@@ -269,10 +277,14 @@ def daily_tab():
                        use_container_width=True)
     d2.download_button('패킹리스트', pk_bytes, '패킹리스트.xlsx',
                        use_container_width=True)
-    dc = st.columns(max(len(buffers), 1))
-    for i, (chan, data) in enumerate(buffers.items()):
-        dc[i].download_button(f'{chan} 발송처리 ({counts[chan]}행)', data,
-                              f'{chan}_발송처리.xlsx', use_container_width=True)
+    for i in range(0, len(outs), 2):
+        cols = st.columns(2)
+        for j, o in enumerate(outs[i:i + 2]):
+            label = o['stem'] if len(o['stem']) <= 28 else o['stem'][:26] + '…'
+            cols[j].download_button(f"{label} · {o['n']}행", o['data'],
+                                    f"{o['stem']}_발송처리.xlsx",
+                                    use_container_width=True,
+                                    key=f"dl_{i}_{j}")
 
     with st.expander('패킹리스트 미리보기'):
         st.dataframe(pk, use_container_width=True, hide_index=True)
