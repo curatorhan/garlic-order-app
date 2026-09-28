@@ -68,15 +68,32 @@ def save_stock(items):
     return d.get('saved_at', ''), ''
 
 
-def save_log(date, weekday, out_rows, hold_rows):
-    """출고·보류 기록 저장. 같은 날짜는 덮어쓴다. error 문자열 반환"""
+def read_rounds(date):
+    """그날 이미 저장된 차수 목록. (rounds, error) 반환"""
+    url, token = _conf()
+    if not (url and token):
+        return [], '저장 설정이 없습니다.'
+    try:
+        r = requests.get(url, params={'token': token, 'action': 'rounds',
+                                      'date': date}, timeout=TIMEOUT)
+        d = r.json()
+    except Exception as e:
+        return [], f'차수를 읽지 못했습니다. {e}'
+    if not d.get('ok'):
+        return [], d.get('error', '알 수 없는 오류')
+    return sorted(int(x) for x in d.get('rounds', [])), ''
+
+
+def save_log(date, weekday, round_no, out_rows, hold_rows):
+    """출고·보류 기록 저장. 같은 일자+차수만 덮어쓴다. error 문자열 반환"""
     url, token = _conf()
     if not (url and token):
         return '저장 설정이 없습니다.'
     try:
         r = requests.post(url, data=json.dumps({
             'token': token, 'action': 'save_log', 'date': date,
-            'weekday': weekday, 'out': out_rows, 'hold': hold_rows}),
+            'weekday': weekday, 'round': round_no,
+            'out': out_rows, 'hold': hold_rows}),
             headers={'Content-Type': 'application/json'}, timeout=TIMEOUT)
         d = r.json()
     except Exception as e:
