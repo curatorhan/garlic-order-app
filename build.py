@@ -13,16 +13,19 @@ BIZ = PatternFill('solid', fgColor='F4B183')
 M1  = PatternFill('solid', fgColor='FFD966')
 M2  = PatternFill('solid', fgColor='9DC3E6')
 HDR = PatternFill('solid', fgColor='3F3F3F')
+ALT = PatternFill('solid', fgColor='F2F2F2')
 
 def integrated_sheet(conf):
-    """단건 위(업소용 우선) → 합배송 아래(이름순, 묶음별 색 교차)"""
+    """업소용 위 → 일반은 품목별 정렬 → 합배송 아래(이름순, 묶음별 색 교차)"""
     conf = conf.copy()
     info = {b: dict(합=len(g) > 1, 수취인=g['_수취인'].iloc[0])
             for b, g in conf.groupby('_묶음')}
     conf['_합'] = conf['_묶음'].map(lambda b: info[b]['합'])
 
     s = conf[~conf['_합']].copy()
-    s['_k'] = s.apply(lambda r: (0 if r['_업소용'] else 1, r['_수취인']), axis=1)
+    # 업소용 먼저, 그다음 품목(재고SKU → 중량) 순, 같은 품목 안에서는 이름순
+    s['_k'] = s.apply(lambda r: (0 if r['_업소용'] else 1, str(r['_sku']),
+                                 float(r['_중량'] or 0), r['_수취인']), axis=1)
     s = s.sort_values('_k')
     m = conf[conf['_합']].copy()
     m['_k'] = m['_묶음'].map(lambda b: info[b]['수취인'])
@@ -41,17 +44,30 @@ def integrated_sheet(conf):
         x.fill = HDR; x.alignment = Alignment(horizontal='center')
 
     i = 2
+    prev_item, shade = None, False
     for _, r in s.iterrows():
         ws.append(row(r))
         if r['_업소용']:
-            for c in range(1, len(COLS) + 1): ws.cell(i, c).fill = BIZ
+            for c in range(1, len(COLS) + 1):
+                ws.cell(i, c).fill = BIZ
+        else:
+            item = (str(r['_sku']), float(r['_중량'] or 0))
+            if item != prev_item:
+                shade = not shade
+                prev_item = item
+            if shade:
+                for c in range(1, len(COLS) + 1):
+                    ws.cell(i, c).fill = ALT
         i += 1
+
     tog, prev = 0, None
     for _, r in m.iterrows():
-        if r['_묶음'] != prev: tog ^= 1; prev = r['_묶음']
+        if r['_묶음'] != prev:
+            tog ^= 1; prev = r['_묶음']
         ws.append(row(r))
         f = M1 if tog else M2
-        for c in range(1, len(COLS) + 1): ws.cell(i, c).fill = f
+        for c in range(1, len(COLS) + 1):
+            ws.cell(i, c).fill = f
         i += 1
 
     for rr in ws.iter_rows(min_row=2, max_row=i - 1, max_col=len(COLS)):
@@ -64,8 +80,9 @@ def integrated_sheet(conf):
     ws.freeze_panes = 'A2'
     buf = io.BytesIO(); wb.save(buf); return buf.getvalue()
 
+
 def _left_rows(conf):
-    """좌측: 업소용(개수) → 깐마늘(kg 합산) → 다진마늘(kg 합산)"""
+    """좌측: 업소용 벌크(개수) → 깐마늘(kg 합산) → 다진마늘(kg 합산)"""
     rows = []
     # 벌크(10kg)만 별도 줄. 5kg은 1kg 5개이므로 아래 kg 합산에 포함된다.
     bulk = conf[conf['_업소용'] & (conf['_중량'] == 10)]
