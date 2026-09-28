@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import io
+import zipfile
 from datetime import datetime
 
 import pandas as pd
@@ -272,19 +274,34 @@ def daily_tab():
             st.markdown(f'- {m}')
 
     pk_bytes, pk = packing_list(conf)
-    d1, d2 = st.columns(2)
-    d1.download_button('통합시트', integrated_sheet(conf), '통합시트.xlsx',
-                       use_container_width=True)
-    d2.download_button('패킹리스트', pk_bytes, '패킹리스트.xlsx',
-                       use_container_width=True)
-    for i in range(0, len(outs), 2):
-        cols = st.columns(2)
-        for j, o in enumerate(outs[i:i + 2]):
-            label = o['stem'] if len(o['stem']) <= 28 else o['stem'][:26] + '…'
-            cols[j].download_button(f"{label} · {o['n']}행", o['data'],
-                                    f"{o['stem']}_발송처리.xlsx",
-                                    use_container_width=True,
-                                    key=f"dl_{i}_{j}")
+    integ = integrated_sheet(conf)
+    stamp = datetime.now().strftime('%Y%m%d')
+
+    # 전체를 zip 하나로
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr(f'통합시트_{stamp}.xlsx', integ)
+        z.writestr(f'패킹리스트_{stamp}.xlsx', pk_bytes)
+        for o in outs:
+            z.writestr(f"발송처리/{o['stem']}_발송처리.xlsx", o['data'])
+    st.download_button(f'전체 내려받기 (zip · 파일 {2 + len(outs)}개)',
+                       zbuf.getvalue(), f'주문처리_{stamp}.zip',
+                       type='primary', use_container_width=True)
+
+    with st.expander('파일 하나씩 받기'):
+        d1, d2 = st.columns(2)
+        d1.download_button('통합시트', integ, '통합시트.xlsx',
+                           use_container_width=True)
+        d2.download_button('패킹리스트', pk_bytes, '패킹리스트.xlsx',
+                           use_container_width=True)
+        for i in range(0, len(outs), 2):
+            cols = st.columns(2)
+            for j, o in enumerate(outs[i:i + 2]):
+                label = o['stem'] if len(o['stem']) <= 28 else o['stem'][:26] + '…'
+                cols[j].download_button(f"{label} · {o['n']}행", o['data'],
+                                        f"{o['stem']}_발송처리.xlsx",
+                                        use_container_width=True,
+                                        key=f"dl_{i}_{j}")
 
     with st.expander('패킹리스트 미리보기'):
         st.dataframe(pk, use_container_width=True, hide_index=True)
