@@ -72,15 +72,20 @@ def parse_option(raw, sep, aux='', def_variety='', def_trim=''):
 
     grade = None
     if form in ('깐마늘', '통마늘'):
-        tmp = nokg.replace('대서', '').replace('육쪽', '').replace('토종', '').replace('꼭지제거', '')
-        for g in GRADES:
-            if re.search(rf'(?<![가-힣]){g}(?![가-힣])', tmp):
-                grade = g; break
-        if grade is None:   # 상품명 뒤 괄호에 등급이 오는 경우 (우체국쇼핑)
-            tmp2 = _clean(re.sub(r'\d+(?:\.\d+)?\s*[kK][gG]', ' ', whole))
+        def _find_grade(text):
+            t = (text.replace('대서', '').replace('육쪽', '').replace('토종', '')
+                     .replace('꼭지제거', '').replace('업소용', ''))
+            t = re.sub(r'\d+(?:\.\d+)?\s*[kK][gG]', ' ', t)
             for g in GRADES:
-                if re.search(rf'(?<![가-힣]){g}(?![가-힣])', tmp2):
-                    grade = g; break
+                if re.search(rf'(?<![가-힣]){g}(?![가-힣])', t):
+                    return g
+            return None
+        # 옵션 본문 → 괄호 지운 전체 → 괄호를 살린 원문(상품명의 "(대)" 형태)
+        raw_all = re.sub(r'[（(]|[）)]', ' ', str(src))
+        for text in (nokg, whole, raw_all):
+            grade = _find_grade(text)
+            if grade:
+                break
 
     business = (form == '깐마늘' and weight in (5, 10))
 
@@ -176,12 +181,18 @@ def read_orders(file, channels):
 
 def check_unknown(df):
     """파싱 실패·미등록 SKU 목록"""
-    bad = df[(df['_중량'] == 0) | (~df['_sku'].isin(KNOWN_SKUS))]
+    bad = df[(df['_중량'] == 0) | (~df['_sku'].isin(KNOWN_SKUS))].copy()
     if bad.empty:
         return pd.DataFrame()
-    return (bad.groupby(['_채널', '_원본옵션', '_sku'])
+    bad['_원본옵션'] = bad['_원본옵션'].fillna('').astype(str)
+    bad.loc[bad['_원본옵션'].str.lower().isin(['', 'nan']), '_원본옵션'] = '(옵션 비어 있음)'
+    bad['_사유'] = bad.apply(
+        lambda r: '중량을 찾지 못했습니다' if r['_중량'] == 0
+        else f"'{r['_sku']}' 는 재고 SKU 목록에 없습니다", axis=1)
+    return (bad.groupby(['_채널', '_원본옵션', '_sku', '_사유'])
               .size().reset_index(name='건수')
-              .rename(columns={'_채널': '채널', '_원본옵션': '원본 옵션', '_sku': '해석 결과'}))
+              .rename(columns={'_채널': '채널', '_원본옵션': '원본 옵션',
+                               '_sku': '해석 결과', '_사유': '사유'}))
 
 # ---------- 배정 ----------
 
